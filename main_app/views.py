@@ -1,14 +1,17 @@
+from multiprocessing import context
 from django.contrib.auth import login, logout
 from django.contrib.auth.forms import UserCreationForm
-from django.contrib.auth.mixins import LoginRequiredMixin
 from django.utils.decorators import method_decorator
+from django.contrib.auth.decorators import login_required
 from platformdirs import user_cache_dir
 from django.shortcuts import redirect
 from django.shortcuts import render
 from django.urls import reverse
 from .models import Planet, Comment, Profile, User
 from django.views import View 
-from django.views.generic import TemplateView, DetailView, CreateView, UpdateView, DeleteView
+from django.views.generic.base import TemplateView
+from django.views.generic import DetailView
+from django.views.generic.edit import CreateView, UpdateView, DeleteView
 from django import forms
 
 
@@ -17,6 +20,7 @@ from django import forms
 class Landing(TemplateView):
     template_name = "landing.html"
 
+# @method_decorator(login_required, name='dispatch')
 class About(TemplateView):
     template_name = "about.html"
 
@@ -40,23 +44,35 @@ class Signup(View):
             context = {"form": form}
             return render(request, "registration/signup.html", context)
 
+@method_decorator(login_required, name='dispatch')
 class Home(TemplateView):
     template_name = "home.html"
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        name = self.request.GET.get("name")
-        print('=====================================================')
-        print(self.request.user)
-        print('=====================================================')
-        if name != None:
-            context["planets"] = Planet.objects.filter(name__icontains=name)
-            context["header"] = f"Searching for {name}"
-            context['profile'] = Profile.objects.filter(user_id=self.request.user)
-        else:
-            context["planets"] = Planet.objects.all()
-            context["header"] = "Trending Planets"
-            context['profile'] = Profile.objects.filter(user_id=self.request.user)
+        context["planets"] = Planet.objects.all()
+        context["comments"] = Comment.objects.all()
         return context
+    # def get_context_data(self, **kwargs):
+    #     context = super().get_context_data(**kwargs)
+    #     name = self.request.GET.get("name")
+    #     print('=================================================')
+    #     print(User.objects.filter(username=self.request.user))
+    #     # print(self.request.query_params.get('id'))
+    #     print(name)
+        
+    #     print('=================================================')
+    #     if name != None:
+    #         context["planets"] = Planet.objects.filter(name__icontains=name)
+    #         context["header"] = f"Searching for {name}"
+    #         context['profile'] = Profile.objects.filter(name=self.request.user)
+    #         context['user'] = User.objects.filter(username = self.request.user)
+    #     else:
+    #         context["planets"] = Planet.objects.all()
+    #         context["header"] = "Trending Planets"
+    #         context['profile'] = Profile.objects.filter(name=self.request.user)
+    #         # context['user'] = User.objects.filter(id = self.kwargs['pk'])
+    #     return context
         
 
 
@@ -67,7 +83,7 @@ class List(TemplateView):
         context = super().get_context_data(**kwargs)
         name = self.request.GET.get("name")
         if name != None:
-            context["planets"] = Planet.objects.filter(name__icontains=name)
+            context["planets"] = Planet.objects.filter(user=self.request.user, name__icontains=name)
             context["header"] = f"Searching for {name}"
         else:
             context["planets"] = Planet.objects.all()
@@ -97,12 +113,14 @@ class ProfileCreate(CreateView):
 
     def form_valid(self, form):
         form.instance.user = self.request.user
-        return super().form_valid(form)
+        return super(ProfileCreate).form_valid(form)
 
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        context['profile'] = Profile.objects.filter()
-        return context
+    def get_success_url(self):
+        return reverse('detail_profile', kwargs={'pk': self.object.pk})
+    # def get_context_data(self, **kwargs):
+    #     context = super().get_context_data(**kwargs)
+    #     context['profile'] = Profile.objects.filter()
+    #     return context
 
 class ProfileDetail(DetailView):
     model = Profile
@@ -110,7 +128,9 @@ class ProfileDetail(DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context['user'] = User.objects.filter(id = self.kwargs['pk'])
+        # context['user'] = User.objects.filter(id = self.kwargs['pk'])
+        print(self.request.user)
+        context['user'] = Profile.objects.filter(user=self.request.user)
         return context
 
 class ProfileUpdate(UpdateView):
@@ -121,6 +141,10 @@ class ProfileUpdate(UpdateView):
     def get_success_url(self):
         return reverse('detail_profile', kwargs={'pk': self.object.pk})
 
+class ProfileDelete(DeleteView):
+    model = Profile
+    template_name = "profile_delete_confirmation.html"
+    success_url = "/home/"
 
 
 class Detail(DetailView):
@@ -135,6 +159,10 @@ class Detail(DetailView):
         else:
             context["planets"] = Planet.objects.all()
             context["header"] = "Trending Planets"
+        return context
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["comments"] = Comment.objects.all()
         return context
 
 class Update(UpdateView):
@@ -158,15 +186,18 @@ def logoutuser(request):
 
 class CommentCreate(CreateView):
     model = Comment
-    fields = ['user', 'title', 'comment']
+    fields = ['user','title', 'comment', 'planet']
     template_name = "comment_create.html"
+
     def post(self, request, pk):
-        user = self.request.user
+        user = User.objects.get(pk=pk)
         title = request.POST.get("title")
         comment = request.POST.get("comment")
-        Comment.objects.create(user=user, title=title, comment=comment)
-        return redirect('detail', pk=pk)
+        planet = Planet.objects.get(pk=request.POST.get("planet"))
+        Comment.objects.create(user=user, title=title, comment=comment, planet=planet)
+        return redirect('home')
 
+        
 class CommentUpdate(UpdateView):
     model = Comment
     fields = ['name', 'title', 'comment',]
@@ -181,3 +212,10 @@ class CommentDelete(DeleteView):
     model = Comment
     template_name = "comment_delete_confirmation.html"
     success_url = "/list/"
+
+def modal(request):
+    model = Comment
+    field = ['title', 'comment']
+    title = request.POST.get("title")
+    comment = request.POST.get("comment")
+    return render(request,'commentcreate.html',{"form":UserCreationForm})
